@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Arcade: Snake & 2048</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Clear+Sans:wght@400;700&display=swap');
+
+        :root {
+            /* --- 2048 CONFIG --- */
+            --field-width: 500px;
+            --grid-gap: 15px;
+            --tile-size: 106.25px; /* (500 - (15*5)) / 4 */
+            
+            /* --- SNAKE COLORS --- */
+            --snake-bg: #050505;
+            --snake-glow: #33ff33;
+            --snake-ui-font: 'VT323', monospace;
+        }
+
+        body {
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.4s ease;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* --- THEMES --- */
+        body.mode-snake {
+            background-color: #111;
+            font-family: var(--snake-ui-font);
+            color: var(--snake-glow);
+        }
+        body.mode-2048 {
+            background-color: #faf8ef;
+            font-family: 'Clear Sans', sans-serif;
+            color: #776e65;
+        }
+
+        /* --- MAIN CONTAINER --- */
+        #arcadeContainer {
+            position: relative;
+            width: var(--field-width);
+            height: var(--field-width);
+            border-radius: 6px;
+            transition: all 0.4s ease;
+        }
+
+        body.mode-snake #arcadeContainer {
+            background: #000;
+            border: 6px solid #444;
+            box-shadow: 0 0 50px rgba(51, 255, 51, 0.15);
+        }
+        
+        /* EXACT 2048 LOOK */
+        body.mode-2048 #arcadeContainer {
+            background: #bbada0; /* The classic board brown */
+            border: none;
+            box-shadow: 0 0 30px rgba(0,0,0,0.2);
+            padding: var(--grid-gap);
+            width: calc(var(--field-width) - (var(--grid-gap)*2)); 
+            height: calc(var(--field-width) - (var(--grid-gap)*2));
+        }
+
+        /* --- UI HEADER --- */
+        #ui-layer {
+            width: var(--field-width);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        h1 { margin: 0; font-size: 3rem; line-height: 1; font-weight: 700; }
+        
+        .score-box {
+            padding: 5px 15px;
+            border-radius: 3px;
+            text-align: center;
+            min-width: 70px;
+        }
+        .score-label { font-size: 0.8rem; opacity: 0.7; display: block; text-transform: uppercase; }
+        .score-val { font-size: 1.5rem; font-weight: bold; display: block; }
+
+        /* Theme Specific UI */
+        body.mode-snake .score-box {
+            background: #002200;
+            border: 1px solid var(--snake-glow);
+            color: var(--snake-glow);
+        }
+        body.mode-2048 .score-box {
+            background: #bbada0;
+            color: white;
+        }
+
+        .switch-btn {
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: inherit;
+            border: none;
+            outline: none;
+        }
+        body.mode-snake .switch-btn {
+            background: #003300; border: 1px solid #33ff33; color: #33ff33; font-size: 1.1rem;
+        }
+        body.mode-snake .switch-btn:hover { background: #33ff33; color: black; }
+
+        body.mode-2048 .switch-btn {
+            background: #8f7a66; color: white; font-size: 1rem;
+        }
+        body.mode-2048 .switch-btn:hover { background: #9c8773; }
+
+
+        /* ============================
+           SNAKE VISUALS (CANVAS)
+           ============================ */
+        canvas {
+            display: none;
+            width: 100%; height: 100%;
+            background: #050505;
+        }
+        body.mode-snake canvas { display: block; }
+
+        /* CRT Scanline Overlay for Snake */
+        .crt-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 50;
+            background: 
+                linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                radial-gradient(circle at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.4) 100%);
+            background-size: 100% 4px, 100% 100%;
+            opacity: 0;
+            transition: opacity 0.4s;
+        }
+        body.mode-snake .crt-overlay { opacity: 1; }
+
+
+        /* ============================
+           2048 VISUALS (DOM)
+           ============================ */
+        .game-2048-layer {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: none;
+        }
+        body.mode-2048 .game-2048-layer { display: block; }
+
+        /* The Grid Background */
+        .grid-bg {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(4, 1fr);
+            gap: var(--grid-gap);
+            width: 100%; height: 100%;
+            padding: var(--grid-gap); /* Padding matches gap */
+            box-sizing: border-box;
+        }
+        .grid-cell {
+            background: #cdc1b4; /* Solid beige for empty slots */
+            border-radius: 3px;
+        }
+
+        /* The Tiles Layer */
+        .tile-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .tile {
+            position: absolute;
+            width: var(--tile-size);
+            height: var(--tile-size);
+            border-radius: 3px;
+            transition: transform 100ms ease-in-out; 
+            display: flex; justify-content: center; align-items: center;
+            font-weight: bold; font-size: 55px;
+            z-index: 20;
+        }
+
+        .tile-inner {
+            width: 100%; height: 100%;
+            border-radius: 3px;
+            display: flex; justify-content: center; align-items: center;
+            animation: pop 200ms ease-in backwards;
+        }
+
+        @keyframes pop {
+            0% { transform: scale(0); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        /* 2048 Colors */
+        .t2 .tile-inner { background: #eee4da; color: #776e65; }
+        .t4 .tile-inner { background: #ede0c8; color: #776e65; }
+        .t8 .tile-inner { background: #f2b179; color: #f9f6f2; }
+        .t16 .tile-inner { background: #f59563; color: #f9f6f2; }
+        .t32 .tile-inner { background: #f67c5f; color: #f9f6f2; }
+        .t64 .tile-inner { background: #f65e3b; color: #f9f6f2; }
+        .t128 .tile-inner { background: #edcf72; color: #f9f6f2; font-size: 45px; }
+        .t256 .tile-inner { background: #edcc61; color: #f9f6f2; font-size: 45px; }
+        .t512 .tile-inner { background: #edc850; color: #f9f6f2; font-size: 45px; }
+        .t1024 .tile-inner { background: #edc53f; color: #f9f6f2; font-size: 35px; }
+        .t2048 .tile-inner { background: #edc22e; color: #f9f6f2; font-size: 35px; box-shadow: 0 0 30px rgba(243, 215, 116, 0.5); }
+
+        /* Footer */
+        #footer {
+            margin-top: 15px;
+            opacity: 0.6;
+            font-size: 0.9rem;
+        }
+        kbd {
+            border: 1px solid currentColor;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        /* Overlay (Game Over / Pause) */
+        .overlay {
+            position: absolute; top:0; left:0; width:100%; height:100%;
+            z-index: 100;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.3s;
+        }
+        .overlay.active { opacity: 1; pointer-events: all; }
+        
+        body.mode-snake .overlay { background: rgba(0, 10, 0, 0.85); text-shadow: 0 0 10px #33ff33; }
+        body.mode-2048 .overlay { background: rgba(238, 228, 218, 0.73); color: #776e65; }
+
+    </style>
+</head>
+<body class="mode-snake">
+
+    <!-- UI -->
+    <div id="ui-layer">
+        <div class="score-box">
+            <span class="score-label">SCORE</span>
+            <span class="score-val" id="score">0</span>
+        </div>
+        
+        <div style="text-align: center;">
+            <h1 id="game-title">SNAKE</h1>
+            <button class="switch-btn" onclick="App.switchMode()">Switch Game [TAB]</button>
+        </div>
+
+        <div class="score-box">
+            <span class="score-label">BEST</span>
+            <span class="score-val" id="best">0</span>
+        </div>
+    </div>
+
+    <!-- GAME CONTAINER -->
+    <div id="arcadeContainer">
+        
+        <!-- ENGINE 1: SNAKE (Canvas) -->
+        <canvas id="snakeCanvas"></canvas>
+        <div class="crt-overlay"></div>
+
+        <!-- ENGINE 2: 2048 (DOM) -->
+        <div class="game-2048-layer">
+            <div class="grid-bg">
+                <!-- 16 Cells -->
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+            </div>
+            <div class="tile-container" id="tileContainer"></div>
+        </div>
+
+        <!-- SHARED OVERLAY -->
+        <div id="overlay" class="overlay">
+            <h1 id="overlay-msg">GAME OVER</h1>
+            <p id="overlay-sub">Press SPACE to Restart</p>
+        </div>
+    </div>
+
+    <div id="footer">
+        <kbd>Arrows</kbd> to Move &nbsp;•&nbsp; <kbd>ESC</kbd> Pause
+    </div>
+
+    <script>
+        // ===========================================
+        // APP CONTROLLER
+        // ===========================================
+        const App = {
+            mode: 'snake',
+            snake: null,
+            game2048: null,
+            isPaused: false,
+
+            init() {
+                this.snake = new SnakeGame();
+                this.game2048 = new Game2048();
+                
+                // Restore best scores
+                this.snake.best = localStorage.getItem('snake_best') || 0;
+                this.game2048.best = localStorage.getItem('2048_best') || 0;
+
+                // Start loop
+                requestAnimationFrame(t => this.loop(t));
+                this.updateUI();
+            },
+
+            switchMode() {
+                this.mode = (this.mode === 'snake') ? '2048' : 'snake';
+                document.body.className = `mode-${this.mode}`;
+                this.isPaused = false; // Unpause on switch
+                document.getElementById('overlay').classList.remove('active');
+                this.updateUI();
+            },
+
+            togglePause() {
+                const overlay = document.getElementById('overlay');
+                const msg = document.getElementById('overlay-msg');
+                const sub = document.getElementById('overlay-sub');
+
+                // Don't pause if game is already over
+                if ((this.mode === 'snake' && this.snake.gameOver) || 
+                    (this.mode === '2048' && this.game2048.gameOver)) return;
+
+                this.isPaused = !this.isPaused;
+
+                if (this.isPaused) {
+                    msg.innerText = "PAUSED";
+                    sub.innerText = "Press ESC to Resume";
+                    overlay.classList.add('active');
+                } else {
+                    overlay.classList.remove('active');
+                }
+            },
+
+            updateUI() {
+                const title = document.getElementById('game-title');
+                const score = document.getElementById('score');
+                const best = document.getElementById('best');
+                
+                if (this.mode === 'snake') {
+                    title.innerText = "SNAKE";
+                    score.innerText = this.snake.score;
+                    best.innerText = this.snake.best;
+                } else {
+                    title.innerText = "2048";
+                    score.innerText = this.game2048.score;
+                    best.innerText = this.game2048.best;
+                }
+            },
+
+            loop(t) {
+                if (!this.isPaused) {
+                    if (this.mode === 'snake') this.snake.update(t);
+                }
+                // 2048 is event-driven
+                requestAnimationFrame(t => this.loop(t));
+            },
+
+            handleInput(key) {
+                const overlay = document.getElementById('overlay');
+                
+                // Pause Logic
+                if (key === 'Escape') {
+                    this.togglePause();
+                    return;
+                }
+
+                if (this.isPaused) return;
+
+                // Restart Logic
+                if (key === 'Space') {
+                    if (this.mode === 'snake' && this.snake.gameOver) this.snake.reset();
+                    if (this.mode === '2048' && this.game2048.gameOver) this.game2048.reset();
+                    
+                    // Hide overlay if game over triggered it
+                    overlay.classList.remove('active');
+                    this.updateUI();
+                    return;
+                }
+
+                if (this.mode === 'snake') this.snake.input(key);
+                if (this.mode === '2048') this.game2048.input(key);
+            }
+        };
+
+        // ===========================================
+        // ENGINE 1: SNAKE (RETRO + INTERPOLATION)
+        // ===========================================
+        class SnakeGame {
+            constructor() {
+                this.canvas = document.getElementById('snakeCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.canvas.width = 500;
+                this.canvas.height = 500;
+                
+                this.gridSize = 20; // 25px tiles
+                this.tileSize = 500 / this.gridSize;
+                
+                this.reset();
+            }
+
+            reset() {
+                this.snake = [{x: 10, y: 10}, {x: 10, y: 11}, {x: 10, y: 12}];
+                this.prevSnake = JSON.parse(JSON.stringify(this.snake));
+                this.dir = {x: 0, y: -1};
+                this.nextDir = {x: 0, y: -1};
+                this.food = {x: 15, y: 5};
+                this.score = 0;
+                this.gameOver = false;
+                this.lastTime = 0;
+                this.accumTime = 0;
+                this.tickRate = 110; 
+            }
+
+            update(t) {
+                if (this.gameOver) return;
+
+                const dt = t - this.lastTime;
+                this.lastTime = t;
+                this.accumTime += dt;
+
+                // Avoid spiral of death if tab inactive
+                if (this.accumTime > 1000) this.accumTime = this.tickRate;
+
+                if (this.accumTime > this.tickRate) {
+                    this.accumTime -= this.tickRate;
+                    this.tick();
+                }
+
+                const progress = this.accumTime / this.tickRate;
+                this.draw(progress);
+            }
+
+            tick() {
+                this.dir = this.nextDir;
+                this.prevSnake = JSON.parse(JSON.stringify(this.snake)); 
+                
+                const head = {x: this.snake[0].x + this.dir.x, y: this.snake[0].y + this.dir.y};
+
+                // Walls
+                if (head.x < 0 || head.x >= this.gridSize || head.y < 0 || head.y >= this.gridSize) {
+                    this.endGame(); return;
+                }
+                // Self
+                for(let i=0; i<this.snake.length-1; i++) {
+                    if (head.x === this.snake[i].x && head.y === this.snake[i].y) {
+                        this.endGame(); return;
+                    }
+                }
+
+                this.snake.unshift(head);
+
+                if (head.x === this.food.x && head.y === this.food.y) {
+                    this.score++;
+                    if (this.score > this.best) {
+                        this.best = this.score;
+                        localStorage.setItem('snake_best', this.best);
+                    }
+                    App.updateUI();
+                    this.placeFood();
+                    this.prevSnake.push(this.prevSnake[this.prevSnake.length-1]);
+                } else {
+                    this.snake.pop();
+                }
+            }
+
+            placeFood() {
+                let valid = false;
+                while(!valid) {
+                    this.food.x = Math.floor(Math.random()*this.gridSize);
+                    this.food.y = Math.floor(Math.random()*this.gridSize);
+                    valid = !this.snake.some(s => s.x === this.food.x && s.y === this.food.y);
+                }
+            }
+
+            draw(p) {
+                if(p > 1) p = 1;
+                const ctx = this.ctx;
+                
+                ctx.fillStyle = '#050505';
+                ctx.fillRect(0,0,500,500);
+
+                ctx.strokeStyle = '#0a2a0a';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for(let i=0; i<=this.gridSize; i++) {
+                    ctx.moveTo(i*this.tileSize, 0); ctx.lineTo(i*this.tileSize, 500);
+                    ctx.moveTo(0, i*this.tileSize); ctx.lineTo(500, i*this.tileSize);
+                }
+                ctx.stroke();
+
+                ctx.fillStyle = '#ff3333';
+                ctx.shadowColor = '#ff3333';
+                ctx.shadowBlur = 15;
+                const fx = this.food.x * this.tileSize + 4;
+                const fy = this.food.y * this.tileSize + 4;
+                ctx.fillRect(fx, fy, this.tileSize-8, this.tileSize-8);
+
+                ctx.fillStyle = '#33ff33';
+                ctx.shadowColor = '#33ff33';
+                ctx.shadowBlur = 15;
+                
+                for(let i=0; i<this.snake.length; i++) {
+                    const curr = this.snake[i];
+                    const prev = this.prevSnake[i];
+                    
+                    if (!prev) { 
+                        ctx.fillRect(curr.x*this.tileSize+2, curr.y*this.tileSize+2, this.tileSize-4, this.tileSize-4);
+                        continue; 
+                    }
+
+                    const x = prev.x + (curr.x - prev.x) * p;
+                    const y = prev.y + (curr.y - prev.y) * p;
+
+                    ctx.fillRect(x*this.tileSize+2, y*this.tileSize+2, this.tileSize-4, this.tileSize-4);
+                }
+                ctx.shadowBlur = 0;
+            }
+
+            endGame() {
+                this.gameOver = true;
+                const msg = document.getElementById('overlay-msg');
+                const sub = document.getElementById('overlay-sub');
+                msg.innerText = "GAME OVER";
+                sub.innerText = "Press SPACE to Restart";
+                document.getElementById('overlay').classList.add('active');
+            }
+
+            input(key) {
+                if (this.gameOver) return;
+                switch(key) {
+                    case 'ArrowUp': if (this.dir.y===0) this.nextDir = {x:0, y:-1}; break;
+                    case 'ArrowDown': if (this.dir.y===0) this.nextDir = {x:0, y:1}; break;
+                    case 'ArrowLeft': if (this.dir.x===0) this.nextDir = {x:-1, y:0}; break;
+                    case 'ArrowRight': if (this.dir.x===0) this.nextDir = {x:1, y:0}; break;
+                }
+            }
+        }
+
+        // ===========================================
+        // ENGINE 2: 2048 (DOM + EXACT MATH)
+        // ===========================================
+        class Game2048 {
+            constructor() {
+                this.container = document.getElementById('tileContainer');
+                this.grid = [];
+                this.tiles = [];
+                this.score = 0;
+                this.best = 0;
+                this.gameOver = false;
+                
+                this.gap = 15;
+                this.size = 106.25; 
+                
+                this.reset();
+            }
+
+            reset() {
+                this.container.innerHTML = '';
+                this.tiles = [];
+                this.score = 0;
+                this.gameOver = false;
+                
+                this.addTile();
+                this.addTile();
+                App.updateUI();
+            }
+
+            addTile() {
+                let available = [];
+                for(let x=0; x<4; x++) for(let y=0; y<4; y++) {
+                    if (!this.getTile(x,y)) available.push({x,y});
+                }
+                if (available.length === 0) return;
+
+                const pos = available[Math.floor(Math.random() * available.length)];
+                // 1% chance of a 4
+                const val = Math.random() < 0.99 ? 2 : 4; 
+                
+                this.createTileElement(pos.x, pos.y, val);
+            }
+
+            createTileElement(x, y, val) {
+                const el = document.createElement('div');
+                el.className = `tile t${val}`;
+                
+                const inner = document.createElement('div');
+                inner.className = 'tile-inner';
+                inner.textContent = val;
+                el.appendChild(inner);
+
+                this.container.appendChild(el);
+                
+                const tileObj = { x, y, val, el, merged: false };
+                this.tiles.push(tileObj);
+                this.updatePos(tileObj);
+                return tileObj;
+            }
+
+            getTile(x, y) {
+                return this.tiles.find(t => t.x === x && t.y === y && !t.toDelete);
+            }
+
+            updatePos(tile) {
+                const px = this.gap + tile.x * (this.size + this.gap);
+                const py = this.gap + tile.y * (this.size + this.gap);
+                tile.el.style.transform = `translate(${px}px, ${py}px)`;
+            }
+
+            move(dx, dy) {
+                if (this.gameOver) return;
+                
+                const xIndices = dx === 1 ? [3,2,1,0] : [0,1,2,3];
+                const yIndices = dy === 1 ? [3,2,1,0] : [0,1,2,3];
+
+                let moved = false;
+                this.tiles.forEach(t => t.merged = false); 
+
+                xIndices.forEach(x => {
+                    yIndices.forEach(y => {
+                        const tile = this.getTile(x, y);
+                        if (!tile) return;
+
+                        let nextX = x, nextY = y;
+                        let dist = 1;
+                        
+                        while(true) {
+                            const testX = x + (dx * dist);
+                            const testY = y + (dy * dist);
+                            
+                            if (testX < 0 || testX > 3 || testY < 0 || testY > 3) break;
+                            
+                            const obstacle = this.getTile(testX, testY);
+                            if (obstacle) {
+                                if (obstacle.val === tile.val && !obstacle.merged && !tile.merged) {
+                                    // MERGE
+                                    tile.toDelete = true; 
+                                    obstacle.toDelete = true;
+                                    
+                                    tile.x = testX; tile.y = testY;
+                                    this.updatePos(tile);
+
+                                    setTimeout(() => {
+                                        if(this.container.contains(tile.el)) this.container.removeChild(tile.el);
+                                        if(this.container.contains(obstacle.el)) this.container.removeChild(obstacle.el);
+                                        
+                                        this.tiles = this.tiles.filter(t => t !== tile && t !== obstacle);
+                                        
+                                        const newVal = tile.val * 2;
+                                        this.score += newVal;
+                                        if (this.score > this.best) {
+                                            this.best = this.score;
+                                            localStorage.setItem('2048_best', this.best);
+                                        }
+                                        App.updateUI();
+
+                                        const newTile = this.createTileElement(testX, testY, newVal);
+                                        newTile.merged = true;
+                                    }, 100);
+                                    
+                                    moved = true;
+                                }
+                                break; 
+                            }
+                            
+                            nextX = testX;
+                            nextY = testY;
+                            dist++;
+                        }
+
+                        if (nextX !== x || nextY !== y) {
+                            tile.x = nextX;
+                            tile.y = nextY;
+                            this.updatePos(tile);
+                            moved = true;
+                        }
+                    });
+                });
+
+                if (moved) {
+                    setTimeout(() => {
+                        this.addTile();
+                        if (this.checkGameOver()) {
+                            this.gameOver = true;
+                            const msg = document.getElementById('overlay-msg');
+                            const sub = document.getElementById('overlay-sub');
+                            msg.innerText = "GAME OVER";
+                            sub.innerText = "Press SPACE to Restart";
+                            document.getElementById('overlay').classList.add('active');
+                        }
+                    }, 120);
+                }
+            }
+
+            checkGameOver() {
+                if (this.tiles.length < 16) return false;
+                for(let t of this.tiles) {
+                    const dirs = [[0,1], [1,0], [0,-1], [-1,0]];
+                    for(let d of dirs) {
+                        const neighbor = this.getTile(t.x + d[0], t.y + d[1]);
+                        if (neighbor && neighbor.val === t.val) return false;
+                    }
+                }
+                return true;
+            }
+
+            input(key) {
+                if (this.gameOver) return;
+                switch(key) {
+                    case 'ArrowUp': this.move(0, -1); break;
+                    case 'ArrowDown': this.move(0, 1); break;
+                    case 'ArrowLeft': this.move(-1, 0); break;
+                    case 'ArrowRight': this.move(1, 0); break;
+                }
+            }
+        }
+
+        // ===========================================
+        // GLOBAL INPUT
+        // ===========================================
+        document.addEventListener('keydown', e => {
+            if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Tab'].includes(e.code)) e.preventDefault();
+            
+            if (e.code === 'Tab') App.switchMode();
+            else App.handleInput(e.code);
+        });
+
+        // Initialize
+        App.init();
+
+    </script>
+</body>
+</html>
